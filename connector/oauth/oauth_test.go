@@ -196,6 +196,74 @@ func TestHandleCallbackForNumericUserID(t *testing.T) {
 	assert.Equal(t, identity.EmailVerified, false)
 }
 
+func TestHandleCallbackForNestedClaimPaths(t *testing.T) {
+	tokenClaims := map[string]interface{}{}
+
+	userInfoClaims := map[string]interface{}{
+		"code": 0,
+		"msg":  "success",
+		"data": map[string]interface{}{
+			"union_id":         "test-union-id",
+			"name":             "test-username",
+			"enterprise_email": "nested@example.com",
+		},
+	}
+
+	testServer := testSetup(t, tokenClaims, userInfoClaims)
+	defer testServer.Close()
+
+	conn := newConnector(t, testServer.URL)
+	conn.userIDKey = "data.union_id"
+	conn.userNameKey = "data.name"
+	conn.preferredUsernameKey = "data.name"
+	conn.emailKey = "data.enterprise_email"
+	req := newRequestWithAuthCode(t, testServer.URL, "TestHandleCallbackForNestedClaimPaths")
+
+	identity, err := conn.HandleCallback(connector.Scopes{}, nil, req)
+	assert.Equal(t, err, nil)
+
+	assert.Equal(t, identity.UserID, "test-union-id")
+	assert.Equal(t, identity.Username, "test-username")
+	assert.Equal(t, identity.PreferredUsername, "test-username")
+	assert.Equal(t, identity.Email, "nested@example.com")
+	assert.Equal(t, identity.EmailVerified, false)
+}
+
+func TestGetClaim(t *testing.T) {
+	result := map[string]interface{}{
+		"email":      "top@example.com",
+		"data.email": "literal@example.com",
+		"data": map[string]interface{}{
+			"email": "nested@example.com",
+			"inner": map[string]interface{}{
+				"id": "deep-id",
+			},
+		},
+	}
+
+	tests := []struct {
+		name  string
+		key   string
+		want  interface{}
+		found bool
+	}{
+		{"top-level key", "email", "top@example.com", true},
+		{"top-level key with dots wins over path", "data.email", "literal@example.com", true},
+		{"nested path", "data.inner.id", "deep-id", true},
+		{"missing top-level key", "missing", nil, false},
+		{"missing nested key", "data.missing", nil, false},
+		{"descend into non-object", "email.x", nil, false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, found := getClaim(result, tc.key)
+			assert.Equal(t, found, tc.found)
+			assert.Equal(t, got, tc.want)
+		})
+	}
+}
+
 func testSetup(t *testing.T, tokenClaims map[string]interface{}, userInfoClaims map[string]interface{}) *httptest.Server {
 	key, err := rsa.GenerateKey(rand.Reader, 1024)
 	if err != nil {

@@ -173,7 +173,7 @@ func (c *oauthConnector) HandleCallback(s connector.Scopes, _ []byte, r *http.Re
 		return identity, fmt.Errorf("OAuth Connector: failed to parse userinfo: %v", err)
 	}
 
-	userID, found := userInfoResult[c.userIDKey]
+	userID, found := getClaim(userInfoResult, c.userIDKey)
 	if !found {
 		return identity, fmt.Errorf("OAuth Connector: not found %v claim", c.userIDKey)
 	}
@@ -185,10 +185,18 @@ func (c *oauthConnector) HandleCallback(s connector.Scopes, _ []byte, r *http.Re
 		return identity, fmt.Errorf("OAuth Connector: %v claim should be string or number, got %T", c.userIDKey, userID)
 	}
 
-	identity.Username, _ = userInfoResult[c.userNameKey].(string)
-	identity.PreferredUsername, _ = userInfoResult[c.preferredUsernameKey].(string)
-	identity.Email, _ = userInfoResult[c.emailKey].(string)
-	identity.EmailVerified, _ = userInfoResult[c.emailVerifiedKey].(bool)
+	if username, ok := getClaim(userInfoResult, c.userNameKey); ok {
+		identity.Username, _ = username.(string)
+	}
+	if preferredUsername, ok := getClaim(userInfoResult, c.preferredUsernameKey); ok {
+		identity.PreferredUsername, _ = preferredUsername.(string)
+	}
+	if email, ok := getClaim(userInfoResult, c.emailKey); ok {
+		identity.Email, _ = email.(string)
+	}
+	if emailVerified, ok := getClaim(userInfoResult, c.emailVerifiedKey); ok {
+		identity.EmailVerified, _ = emailVerified.(bool)
+	}
 
 	if s.Groups {
 		groups := map[string]struct{}{}
@@ -259,4 +267,27 @@ func decode(seg string) ([]byte, error) {
 	}
 
 	return base64.URLEncoding.DecodeString(seg)
+}
+
+func getClaim(result map[string]interface{}, key string) (interface{}, bool) {
+	if v, ok := result[key]; ok {
+		return v, true
+	}
+
+	if !strings.Contains(key, ".") {
+		return nil, false
+	}
+
+	var current interface{} = result
+	for _, part := range strings.Split(key, ".") {
+		m, ok := current.(map[string]interface{})
+		if !ok {
+			return nil, false
+		}
+		if current, ok = m[part]; !ok {
+			return nil, false
+		}
+	}
+
+	return current, true
 }
